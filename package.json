@@ -1,0 +1,25 @@
+{
+  "name": "lavender-house-cleaning-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "node src/index.js",
+    "start": "node src/index.js",
+    "prisma:generate": "prisma generate",
+    "build": "prisma generate && prisma db push",
+    "seed:staff": "node prisma/seed-staff.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.3.1",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "prisma": "^6.3.1"
+  }
+}
