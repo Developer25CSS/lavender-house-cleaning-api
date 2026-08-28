@@ -1,14 +1,20 @@
 /*
  * STARTER CONTENT — not the owner's real proprietary test.
  * These 30 questions are placeholders so the hiring quiz is immediately
- * functional and testable. Review and rewrite them (via a future admin
- * editor, or by editing this file and re-running `npm run seed:quiz`)
- * before using this for real hiring decisions.
+ * functional and testable. Review and rewrite them before using this for
+ * real hiring decisions.
+ *
+ * Generates prisma/seed-quiz.sql, then applies it to D1 directly (Prisma
+ * Client can't reach a D1 binding outside a Workers runtime, so this writes
+ * plain SQL and runs it via `wrangler d1 execute`, the same way migrations
+ * are applied).
+ *
+ * Usage: node prisma/seed-quiz.js --local   (or --remote for production)
  */
-require("dotenv").config();
-const { PrismaClient } = require("@prisma/client");
-
-const prisma = new PrismaClient();
+const fs = require("fs");
+const path = require("path");
+const { execSync } = require("child_process");
+const crypto = require("crypto");
 
 const GENERAL = [
   ["What's the correct order to clean a room in?", ["Floors first, then surfaces", "Top to bottom, floors last", "Whatever is fastest", "Bathroom first, always"], 1],
@@ -55,26 +61,31 @@ function rotate([text, choices, correctIndex], shift) {
   return [text, rotated, (correctIndex + shift) % choices.length];
 }
 
-async function main() {
-  await prisma.quizQuestion.deleteMany({});
-
-  const rows = [
-    ...GENERAL.map((q, i) => rotate(q, i % 4)).map(([text, choices, correctIndex], i) => ({
-      text, choices, correctIndex, category: "GENERAL", order: i,
-    })),
-    ...SCENARIO.map((q, i) => rotate(q, (i + 2) % 4)).map(([text, choices, correctIndex], i) => ({
-      text, choices, correctIndex, category: "SCENARIO", order: GENERAL.length + i,
-    })),
-  ];
-
-  await prisma.quizQuestion.createMany({ data: rows });
-  console.log(`Seeded ${rows.length} quiz questions.`);
-  console.log("Answer key (choice index per question, in order):", JSON.stringify(rows.map((r) => r.correctIndex)));
+function sqlEscape(s) {
+  return "'" + String(s).replace(/'/g, "''") + "'";
 }
 
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(() => prisma.$disconnect());
+const rows = [
+  ...GENERAL.map((q, i) => rotate(q, i % 4)).map(([text, choices, correctIndex], i) => ({
+    text, choices, correctIndex, category: "GENERAL", order: i,
+  })),
+  ...SCENARIO.map((q, i) => rotate(q, (i + 2) % 4)).map(([text, choices, correctIndex], i) => ({
+    text, choices, correctIndex, category: "SCENARIO", order: GENERAL.length + i,
+  })),
+];
+
+const statements = [
+  "DELETE FROM \"QuizQuestion\";",
+  ...rows.map((r) => {
+    const id = crypto.randomUUID();
+    return `INSERT INTO "QuizQuestion" (id, text, choices, correctIndex, category, "order") VALUES (${sqlEscape(id)}, ${sqlEscape(r.text)}, ${sqlEscape(JSON.stringify(r.choices))}, ${r.correctIndex}, ${sqlEscape(r.category)}, ${r.order});`;
+  }),
+];
+
+const sqlPath = path.join(__dirname, "seed-quiz.sql");
+fs.writeFileSync(sqlPath, statements.join("\n"));
+
+const target = process.argv.includes("--remote") ? "--remote" : "--local";
+execSync(`npx wrangler d1 execute lavender-house-cleaning-db ${target} --file=${sqlPath}`, { stdio: "inherit" });
+console.log(`Seeded ${rows.length} quiz questions (${target}).`);
+console.log("Answer key (choice index per question, in order):", JSON.stringify(rows.map((r) => r.correctIndex)));

@@ -1,134 +1,125 @@
-const express = require("express");
-const prisma = require("./prisma");
-const { requireAuth, requireRole, requireActiveStaff } = require("./middleware");
-const asyncHandler = require("./asyncHandler");
+import { Hono } from "hono";
+import { getCookie } from "hono/cookie";
+import { jwtVerify } from "jose";
+import { getPrisma } from "./prisma.js";
+import { requireAuth, requireRole, requireActiveStaff, secretKey } from "./middleware.js";
 
-const router = express.Router();
+const app = new Hono();
 
-function optionalAuth(req, res, next) {
-  const jwt = require("jsonwebtoken");
-  const token = req.cookies.token;
+// Guest bookings are allowed, but if a valid session cookie is present we
+// still want to know who's booking (to link the booking to their account).
+async function optionalAuth(c, next) {
+  const token = getCookie(c, "token");
   if (token) {
     try {
-      req.user = jwt.verify(token, process.env.JWT_SECRET);
+      const { payload } = await jwtVerify(token, secretKey(c.env));
+      c.set("user", payload);
     } catch {
       // guest booking with a stale cookie is still fine
     }
   }
-  next();
+  await next();
 }
 
 const CLEANER_SELECT = { id: true, name: true };
 
-router.post(
-  "/",
-  optionalAuth,
-  asyncHandler(async (req, res) => {
-    const { name, phone, email, homeSize, service, area, addons, notes, totalPrice, preferredCleanerId } = req.body;
-    if (!name || !phone || !email || !homeSize || !service || !area) {
-      return res.status(400).json({ error: "Missing required booking fields" });
-    }
+app.post("/", optionalAuth, async (c) => {
+  const body = await c.req.json();
+  const { name, phone, email, homeSize, service, area, addons, notes, totalPrice, preferredCleanerId } = body;
+  if (!name || !phone || !email || !homeSize || !service || !area) {
+    return c.json({ error: "Missing required booking fields" }, 400);
+  }
 
-    let validPreferredCleanerId = null;
-    if (preferredCleanerId && req.user) {
-      // Only allow requesting a cleaner the logged-in customer has actually had before, and who is still active.
-      const priorBooking = await prisma.booking.findFirst({
-        where: { userId: req.user.id, assignedCleanerId: preferredCleanerId },
-      });
-      const cleaner = await prisma.user.findUnique({ where: { id: preferredCleanerId } });
-      if (priorBooking && cleaner && cleaner.employmentStatus === "ACTIVE") {
-        validPreferredCleanerId = preferredCleanerId;
-      }
-    }
+  const prisma = getPrisma(c.env);
+  const user = c.get("user");
 
-    const booking = await prisma.booking.create({
-      data: {
-        userId: req.user ? req.user.id : null,
-        name,
-        phone,
-        email,
-        homeSize,
-        service,
-        area,
-        addons: addons || null,
-        notes: notes || null,
-        totalPrice: totalPrice != null ? Number(totalPrice) : null,
-        preferredCleanerId: validPreferredCleanerId,
-      },
+  let validPreferredCleanerId = null;
+  if (preferredCleanerId && user) {
+    // Only allow requesting a cleaner the logged-in customer has actually had before, and who is still active.
+    const priorBooking = await prisma.booking.findFirst({
+      where: { userId: user.id, assignedCleanerId: preferredCleanerId },
     });
+    const cleaner = await prisma.user.findUnique({ where: { id: preferredCleanerId } });
+    if (priorBooking && cleaner && cleaner.employmentStatus === "ACTIVE") {
+      validPreferredCleanerId = preferredCleanerId;
+    }
+  }
 
-    res.status(201).json(booking);
-  })
-);
+  const booking = await prisma.booking.create({
+    data: {
+      userId: user ? user.id : null,
+      name,
+      phone,
+      email,
+      homeSize,
+      service,
+      area,
+      addons: addons || null,
+      notes: notes || null,
+      totalPrice: totalPrice != null ? Number(totalPrice) : null,
+      preferredCleanerId: validPreferredCleanerId,
+    },
+  });
 
-router.get(
-  "/",
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const isStaff = req.user.role === "STAFF" || req.user.role === "ADMIN";
-    const bookings = await prisma.booking.findMany({
-      where: isStaff ? {} : { userId: req.user.id },
-      orderBy: { createdAt: "desc" },
-      include: {
-        assignedCleaner: { select: CLEANER_SELECT },
-        preferredCleaner: { select: CLEANER_SELECT },
-        review: true,
-      },
+  return c.json(booking, 201);
+});
+
+app.get("/", requireAuth, requireActiveStaff, async (c) => {
+  const prisma = getPrisma(c.env);
+  const user = c.get("user");
+  const isStaff = user.role === "STAFF" || user.role === "ADMIN";
+  const bookings = await prisma.booking.findMany({
+    where: isStaff ? {} : { userId: user.id },
+    orderBy: { createdAt: "desc" },
+    include: {
+      assignedCleaner: { select: CLEANER_SELECT },
+      preferredCleaner: { select: CLEANER_SELECT },
+      review: true,
+    },
+  });
+  return c.json(bookings);
+});
+
+app.patch("/:id", requireAuth, requireRole("STAFF", "ADMIN"), requireActiveStaff, async (c) => {
+  const { status } = await c.req.json();
+  const allowed = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED"];
+  if (!allowed.includes(status)) {
+    return c.json({ error: "status must be one of " + allowed.join(", ") }, 400);
+  }
+
+  const prisma = getPrisma(c.env);
+  try {
+    const booking = await prisma.booking.update({
+      where: { id: c.req.param("id") },
+      data: { status },
     });
-    res.json(bookings);
-  })
-);
+    return c.json(booking);
+  } catch {
+    return c.json({ error: "Booking not found" }, 404);
+  }
+});
 
-router.patch(
-  "/:id",
-  requireAuth,
-  requireRole("STAFF", "ADMIN"),
-  requireActiveStaff,
-  asyncHandler(async (req, res) => {
-    const { status } = req.body;
-    const allowed = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED"];
-    if (!allowed.includes(status)) {
-      return res.status(400).json({ error: "status must be one of " + allowed.join(", ") });
+app.patch("/:id/assign-cleaner", requireAuth, requireRole("STAFF", "ADMIN"), requireActiveStaff, async (c) => {
+  const { cleanerId } = await c.req.json();
+  const prisma = getPrisma(c.env);
+
+  if (cleanerId) {
+    const cleaner = await prisma.user.findUnique({ where: { id: cleanerId } });
+    if (!cleaner || !["STAFF", "ADMIN"].includes(cleaner.role) || cleaner.employmentStatus !== "ACTIVE") {
+      return c.json({ error: "cleanerId must be an active staff member" }, 400);
     }
+  }
 
-    try {
-      const booking = await prisma.booking.update({
-        where: { id: req.params.id },
-        data: { status },
-      });
-      res.json(booking);
-    } catch {
-      res.status(404).json({ error: "Booking not found" });
-    }
-  })
-);
+  try {
+    const booking = await prisma.booking.update({
+      where: { id: c.req.param("id") },
+      data: { assignedCleanerId: cleanerId || null },
+      include: { assignedCleaner: { select: CLEANER_SELECT } },
+    });
+    return c.json(booking);
+  } catch {
+    return c.json({ error: "Booking not found" }, 404);
+  }
+});
 
-router.patch(
-  "/:id/assign-cleaner",
-  requireAuth,
-  requireRole("STAFF", "ADMIN"),
-  requireActiveStaff,
-  asyncHandler(async (req, res) => {
-    const { cleanerId } = req.body;
-
-    if (cleanerId) {
-      const cleaner = await prisma.user.findUnique({ where: { id: cleanerId } });
-      if (!cleaner || !["STAFF", "ADMIN"].includes(cleaner.role) || cleaner.employmentStatus !== "ACTIVE") {
-        return res.status(400).json({ error: "cleanerId must be an active staff member" });
-      }
-    }
-
-    try {
-      const booking = await prisma.booking.update({
-        where: { id: req.params.id },
-        data: { assignedCleanerId: cleanerId || null },
-        include: { assignedCleaner: { select: CLEANER_SELECT } },
-      });
-      res.json(booking);
-    } catch {
-      res.status(404).json({ error: "Booking not found" });
-    }
-  })
-);
-
-module.exports = router;
+export default app;

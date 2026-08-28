@@ -1,36 +1,42 @@
-const jwt = require("jsonwebtoken");
-const prisma = require("./prisma");
-const asyncHandler = require("./asyncHandler");
+import { getCookie } from "hono/cookie";
+import { jwtVerify } from "jose";
+import { getPrisma } from "./prisma.js";
 
-function requireAuth(req, res, next) {
-  const token = req.cookies.token;
-  if (!token) return res.status(401).json({ error: "Not logged in" });
+export function secretKey(env) {
+  return new TextEncoder().encode(env.JWT_SECRET);
+}
+
+export async function requireAuth(c, next) {
+  const token = getCookie(c, "token");
+  if (!token) return c.json({ error: "Not logged in" }, 401);
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
-    next();
+    const { payload } = await jwtVerify(token, secretKey(c.env));
+    c.set("user", payload);
+    await next();
   } catch {
-    res.status(401).json({ error: "Invalid or expired session" });
+    return c.json({ error: "Invalid or expired session" }, 401);
   }
 }
 
-function requireRole(...roles) {
-  return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ error: "Not allowed" });
+export function requireRole(...roles) {
+  return async (c, next) => {
+    const user = c.get("user");
+    if (!roles.includes(user.role)) {
+      return c.json({ error: "Not allowed" }, 403);
     }
-    next();
+    await next();
   };
 }
 
 // Re-checks the DB so a just-terminated cleaner's still-valid JWT cookie
 // can't keep them logged in for up to 30 days after being fired.
-const requireActiveStaff = asyncHandler(async (req, res, next) => {
-  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+export async function requireActiveStaff(c, next) {
+  const prisma = getPrisma(c.env);
+  const jwtUser = c.get("user");
+  const user = await prisma.user.findUnique({ where: { id: jwtUser.id } });
   if (!user || user.employmentStatus === "TERMINATED") {
-    return res.status(403).json({ error: "Account no longer active" });
+    return c.json({ error: "Account no longer active" }, 403);
   }
-  req.user = user;
-  next();
-});
-
-module.exports = { requireAuth, requireRole, requireActiveStaff };
+  c.set("user", user);
+  await next();
+}

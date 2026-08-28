@@ -1,15 +1,15 @@
-const express = require("express");
-const prisma = require("./prisma");
-const { requireAuth, requireRole, requireActiveStaff } = require("./middleware");
-const asyncHandler = require("./asyncHandler");
+import { Hono } from "hono";
+import { getPrisma } from "./prisma.js";
+import { requireAuth, requireRole, requireActiveStaff } from "./middleware.js";
 
-const router = express.Router();
+const app = new Hono();
 
 const MIN_REVIEWS_TO_FLAG = 3;
 
-router.use(requireAuth, requireRole("STAFF", "ADMIN"), requireActiveStaff);
+app.use("*", requireAuth, requireRole("STAFF", "ADMIN"), requireActiveStaff);
 
-router.get("/", asyncHandler(async (req, res) => {
+app.get("/", async (c) => {
+  const prisma = getPrisma(c.env);
   const cleaners = await prisma.user.findMany({
     where: { role: { in: ["STAFF", "ADMIN"] } },
     select: {
@@ -24,58 +24,61 @@ router.get("/", asyncHandler(async (req, res) => {
     },
   });
 
-  const withRating = cleaners.map((c) => {
-    const count = c.reviewsReceived.length;
-    const avg = count ? c.reviewsReceived.reduce((sum, r) => sum + r.rating, 0) / count : null;
+  const withRating = cleaners.map((cl) => {
+    const count = cl.reviewsReceived.length;
+    const avg = count ? cl.reviewsReceived.reduce((sum, r) => sum + r.rating, 0) / count : null;
     return {
-      id: c.id,
-      name: c.name,
-      email: c.email,
-      role: c.role,
-      payTrack: c.payTrack,
-      employmentStatus: c.employmentStatus,
+      id: cl.id,
+      name: cl.name,
+      email: cl.email,
+      role: cl.role,
+      payTrack: cl.payTrack,
+      employmentStatus: cl.employmentStatus,
       reviewCount: count,
       avgRating: avg,
       flagged: avg !== null && count >= MIN_REVIEWS_TO_FLAG && avg < 4.0,
-      discipline: c.disciplineReceived,
+      discipline: cl.disciplineReceived,
     };
   });
 
-  res.json(withRating);
-}));
+  return c.json(withRating);
+});
 
 // Discipline notes and status changes are ADMIN-only, deliberately: letting
 // cleaners log notes about peers invites retaliation with no oversight.
-router.post("/:id/discipline", requireRole("ADMIN"), asyncHandler(async (req, res) => {
-  const { note } = req.body;
-  if (!note) return res.status(400).json({ error: "note is required" });
+app.post("/:id/discipline", requireRole("ADMIN"), async (c) => {
+  const { note } = await c.req.json();
+  if (!note) return c.json({ error: "note is required" }, 400);
 
-  const cleaner = await prisma.user.findUnique({ where: { id: req.params.id } });
+  const prisma = getPrisma(c.env);
+  const cleaner = await prisma.user.findUnique({ where: { id: c.req.param("id") } });
   if (!cleaner || !["STAFF", "ADMIN"].includes(cleaner.role)) {
-    return res.status(404).json({ error: "Cleaner not found" });
+    return c.json({ error: "Cleaner not found" }, 404);
   }
 
+  const user = c.get("user");
   const created = await prisma.disciplineNote.create({
-    data: { cleanerId: cleaner.id, issuedById: req.user.id, note },
+    data: { cleanerId: cleaner.id, issuedById: user.id, note },
   });
-  res.status(201).json(created);
-}));
+  return c.json(created, 201);
+});
 
-router.patch("/:id/status", requireRole("ADMIN"), asyncHandler(async (req, res) => {
-  const { employmentStatus } = req.body;
+app.patch("/:id/status", requireRole("ADMIN"), async (c) => {
+  const { employmentStatus } = await c.req.json();
   if (!["ACTIVE", "WARNED", "TERMINATED"].includes(employmentStatus)) {
-    return res.status(400).json({ error: "employmentStatus must be ACTIVE, WARNED, or TERMINATED" });
+    return c.json({ error: "employmentStatus must be ACTIVE, WARNED, or TERMINATED" }, 400);
   }
 
+  const prisma = getPrisma(c.env);
   try {
     const updated = await prisma.user.update({
-      where: { id: req.params.id },
+      where: { id: c.req.param("id") },
       data: { employmentStatus },
     });
-    res.json({ id: updated.id, employmentStatus: updated.employmentStatus });
+    return c.json({ id: updated.id, employmentStatus: updated.employmentStatus });
   } catch {
-    res.status(404).json({ error: "Cleaner not found" });
+    return c.json({ error: "Cleaner not found" }, 404);
   }
-}));
+});
 
-module.exports = router;
+export default app;

@@ -1,26 +1,27 @@
-const express = require("express");
-const prisma = require("./prisma");
-const { requireAuth } = require("./middleware");
-const asyncHandler = require("./asyncHandler");
+import { Hono } from "hono";
+import { getPrisma } from "./prisma.js";
+import { requireAuth } from "./middleware.js";
 
-const router = express.Router();
+const app = new Hono();
 
-router.post("/", requireAuth, asyncHandler(async (req, res) => {
-  const { bookingId, rating, comment } = req.body;
+app.post("/", requireAuth, async (c) => {
+  const { bookingId, rating, comment } = await c.req.json();
   const ratingNum = Number(rating);
   if (!bookingId || !Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5) {
-    return res.status(400).json({ error: "bookingId and an integer rating 1-5 are required" });
+    return c.json({ error: "bookingId and an integer rating 1-5 are required" }, 400);
   }
 
+  const prisma = getPrisma(c.env);
+  const user = c.get("user");
   const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
-  if (!booking || booking.userId !== req.user.id) {
-    return res.status(404).json({ error: "Booking not found" });
+  if (!booking || booking.userId !== user.id) {
+    return c.json({ error: "Booking not found" }, 404);
   }
   if (booking.status !== "COMPLETED") {
-    return res.status(400).json({ error: "You can only review a completed booking" });
+    return c.json({ error: "You can only review a completed booking" }, 400);
   }
   if (!booking.assignedCleanerId) {
-    return res.status(400).json({ error: "This booking has no assigned cleaner to review" });
+    return c.json({ error: "This booking has no assigned cleaner to review" }, 400);
   }
 
   try {
@@ -32,10 +33,10 @@ router.post("/", requireAuth, asyncHandler(async (req, res) => {
         comment: comment || null,
       },
     });
-    res.status(201).json(review);
+    return c.json(review, 201);
   } catch {
-    res.status(409).json({ error: "You already reviewed this booking" });
+    return c.json({ error: "You already reviewed this booking" }, 409);
   }
-}));
+});
 
-module.exports = router;
+export default app;

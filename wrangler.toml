@@ -1,0 +1,12 @@
+name = "lavender-house-cleaning-api"
+main = "src/index.js"
+compatibility_date = "2026-08-27"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lavender-house-cleaning-db"
+database_id = "5abe58c4-881b-428a-9fdf-ef6766aa0e8d"
+
+[vars]
+CORS_ORIGIN = "https://lavenderhousecleaning.company,https://lavender-house-cleaning.pages.dev"

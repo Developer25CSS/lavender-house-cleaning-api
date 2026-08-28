@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -13,36 +13,19 @@ model User {
   passwordHash String
   name         String
   phone        String?
-  role         Role      @default(CUSTOMER)
+  role         String    @default("CUSTOMER") // CUSTOMER | STAFF | ADMIN
   createdAt    DateTime  @default(now())
   bookings     Booking[]
 
   // Cleaner-specific fields — only meaningful when role is STAFF (or ADMIN, unused there)
-  payTrack         PayTrack?
-  employmentStatus EmploymentStatus? @default(ACTIVE)
+  payTrack         String? // OWN_SUPPLIES | COMPANY_SUPPLIES
+  employmentStatus String? @default("ACTIVE") // ACTIVE | WARNED | TERMINATED
 
   bookingsAsCleaner  Booking[]        @relation("AssignedCleaner")
   bookingsPreferred  Booking[]        @relation("PreferredCleaner")
   reviewsReceived    Review[]
   disciplineReceived DisciplineNote[] @relation("DisciplineSubject")
   disciplineIssued   DisciplineNote[] @relation("DisciplineIssuer")
-}
-
-enum Role {
-  CUSTOMER
-  STAFF
-  ADMIN
-}
-
-enum PayTrack {
-  OWN_SUPPLIES
-  COMPANY_SUPPLIES
-}
-
-enum EmploymentStatus {
-  ACTIVE
-  WARNED
-  TERMINATED
 }
 
 model Booking {
@@ -58,7 +41,7 @@ model Booking {
   addons     String?
   notes      String?
   totalPrice Int?
-  status     Status   @default(PENDING)
+  status     String   @default("PENDING") // PENDING | CONFIRMED | COMPLETED | CANCELLED
   createdAt  DateTime @default(now())
 
   assignedCleanerId  String?
@@ -68,44 +51,26 @@ model Booking {
   review             Review?
 }
 
-enum Status {
-  PENDING
-  CONFIRMED
-  COMPLETED
-  CANCELLED
-}
-
 model Applicant {
-  id         String          @id @default(cuid())
+  id         String   @id @default(cuid())
   name       String
-  email      String          @unique
+  email      String   @unique
   phone      String
-  payTrack   PayTrack
-  answers    Int[]
+  payTrack   String // OWN_SUPPLIES | COMPANY_SUPPLIES
+  answers    String // JSON-encoded array of choice indices (SQLite has no native array type)
   quizScore  Int
   quizPassed Boolean
-  status     ApplicantStatus @default(PENDING)
-  createdAt  DateTime        @default(now())
-}
-
-enum ApplicantStatus {
-  PENDING
-  HIRED
-  REJECTED
+  status     String   @default("PENDING") // PENDING | HIRED | REJECTED
+  createdAt  DateTime @default(now())
 }
 
 model QuizQuestion {
-  id           String       @id @default(cuid())
+  id           String @id @default(cuid())
   text         String
-  choices      String[]
+  choices      String // JSON-encoded array of choice strings
   correctIndex Int
-  category     QuizCategory
+  category     String // GENERAL | SCENARIO
   order        Int
-}
-
-enum QuizCategory {
-  GENERAL
-  SCENARIO
 }
 
 model Review {

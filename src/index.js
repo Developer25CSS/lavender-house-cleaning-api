@@ -1,44 +1,36 @@
-require("dotenv").config();
-const express = require("express");
-const cors = require("cors");
-const cookieParser = require("cookie-parser");
+import { Hono } from "hono";
+import { cors } from "hono/cors";
 
-const authRoutes = require("./auth");
-const bookingRoutes = require("./bookings");
-const quizRoutes = require("./quiz");
-const applicantRoutes = require("./applicants");
-const cleanerRoutes = require("./cleaners");
-const reviewRoutes = require("./reviews");
+import authRoutes, { signInviteToken } from "./auth.js";
+import bookingRoutes from "./bookings.js";
+import quizRoutes from "./quiz.js";
+import applicantRoutes from "./applicants.js";
+import cleanerRoutes from "./cleaners.js";
+import reviewRoutes from "./reviews.js";
+import reportRoutes from "./reports.js";
 
-const app = express();
-app.set("trust proxy", 1); // Render sits behind a proxy — needed so req.ip (used for rate limiting) is the real client IP, not the proxy's
+const app = new Hono();
 
-const allowedOrigins = (process.env.CORS_ORIGIN || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-app.use(
-  cors({
-    origin: allowedOrigins.length ? allowedOrigins : true,
+app.use("*", async (c, next) => {
+  const allowedOrigins = (c.env.CORS_ORIGIN || "").split(",").map((s) => s.trim()).filter(Boolean);
+  return cors({
+    origin: allowedOrigins.length ? allowedOrigins : "*",
     credentials: true,
-  })
-);
-app.use(express.json());
-app.use(cookieParser());
-
-app.get("/health", (req, res) => res.json({ ok: true }));
-app.use("/api/auth", authRoutes);
-app.use("/api/bookings", bookingRoutes);
-app.use("/api", quizRoutes);
-app.use("/api/staff/applicants", applicantRoutes);
-app.use("/api/staff/cleaners", cleanerRoutes);
-app.use("/api/reviews", reviewRoutes);
-
-app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ error: "Server error" });
+  })(c, next);
 });
 
-const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`API listening on :${port}`));
+app.get("/health", (c) => c.json({ ok: true }));
+app.route("/api/auth", authRoutes);
+app.route("/api/bookings", bookingRoutes);
+app.route("/api", quizRoutes);
+app.route("/api/staff/applicants", applicantRoutes);
+app.route("/api/staff/cleaners", cleanerRoutes);
+app.route("/api/reviews", reviewRoutes);
+app.route("/api/staff/reports", reportRoutes);
+
+app.onError((err, c) => {
+  console.error(err);
+  return c.json({ error: "Server error" }, 500);
+});
+
+export default app;

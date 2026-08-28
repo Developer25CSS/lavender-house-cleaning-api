@@ -1,48 +1,45 @@
-const express = require("express");
-const bcrypt = require("bcryptjs");
-const crypto = require("node:crypto");
-const prisma = require("./prisma");
-const { requireAuth, requireRole, requireActiveStaff } = require("./middleware");
-const { signInviteToken } = require("./auth");
-const asyncHandler = require("./asyncHandler");
+import { Hono } from "hono";
+import bcrypt from "bcryptjs";
+import { getPrisma } from "./prisma.js";
+import { requireAuth, requireRole, requireActiveStaff } from "./middleware.js";
+import { signInviteToken } from "./auth.js";
 
-const router = express.Router();
+const app = new Hono();
 
-router.use(requireAuth, requireRole("STAFF", "ADMIN"), requireActiveStaff);
+app.use("*", requireAuth, requireRole("STAFF", "ADMIN"), requireActiveStaff);
 
-router.get(
-  "/",
-  asyncHandler(async (req, res) => {
-    const applicants = await prisma.applicant.findMany({ orderBy: { createdAt: "desc" } });
-    res.json(applicants);
-  })
-);
+app.get("/", async (c) => {
+  const prisma = getPrisma(c.env);
+  const applicants = await prisma.applicant.findMany({ orderBy: { createdAt: "desc" } });
+  return c.json(applicants.map((a) => ({ ...a, answers: JSON.parse(a.answers) })));
+});
 
-router.patch("/:id", asyncHandler(async (req, res) => {
-  const { status } = req.body;
+app.patch("/:id", async (c) => {
+  const { status } = await c.req.json();
   if (!["HIRED", "REJECTED"].includes(status)) {
-    return res.status(400).json({ error: "status must be HIRED or REJECTED" });
+    return c.json({ error: "status must be HIRED or REJECTED" }, 400);
   }
 
-  const applicant = await prisma.applicant.findUnique({ where: { id: req.params.id } });
-  if (!applicant) return res.status(404).json({ error: "Applicant not found" });
+  const prisma = getPrisma(c.env);
+  const applicant = await prisma.applicant.findUnique({ where: { id: c.req.param("id") } });
+  if (!applicant) return c.json({ error: "Applicant not found" }, 404);
 
   // The quiz is a hard gate, not just an informational column — an admin
   // cannot hire someone who failed it.
   if (status === "HIRED" && !applicant.quizPassed) {
-    return res.status(400).json({ error: "This applicant did not pass the hiring quiz" });
+    return c.json({ error: "This applicant did not pass the hiring quiz" }, 400);
   }
 
   if (status === "REJECTED") {
     const updated = await prisma.applicant.update({ where: { id: applicant.id }, data: { status } });
-    return res.json(updated);
+    return c.json({ ...updated, answers: JSON.parse(updated.answers) });
   }
 
   // HIRED: create the real User account with an unusable placeholder password,
   // and hand back a one-time invite token for them to set their own password.
   const existingUser = await prisma.user.findUnique({ where: { email: applicant.email } });
   if (existingUser) {
-    return res.status(409).json({ error: "A user account with this email already exists" });
+    return c.json({ error: "A user account with this email already exists" }, 409);
   }
 
   const placeholderHash = await bcrypt.hash(crypto.randomUUID(), 10);
@@ -60,7 +57,10 @@ router.patch("/:id", asyncHandler(async (req, res) => {
 
   const updated = await prisma.applicant.update({ where: { id: applicant.id }, data: { status } });
 
-  res.json({ applicant: updated, inviteToken: signInviteToken(user.id) });
-}));
+  return c.json({
+    applicant: { ...updated, answers: JSON.parse(updated.answers) },
+    inviteToken: await signInviteToken(c.env, user.id),
+  });
+});
 
-module.exports = router;
+export default app;
