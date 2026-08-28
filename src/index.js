@@ -5,8 +5,13 @@ const cookieParser = require("cookie-parser");
 
 const authRoutes = require("./auth");
 const bookingRoutes = require("./bookings");
+const quizRoutes = require("./quiz");
+const applicantRoutes = require("./applicants");
+const cleanerRoutes = require("./cleaners");
+const reviewRoutes = require("./reviews");
 
 const app = express();
+app.set("trust proxy", 1); // Render sits behind a proxy — needed so req.ip (used for rate limiting) is the real client IP, not the proxy's
 
 const allowedOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
@@ -25,6 +30,10 @@ app.use(cookieParser());
 app.get("/health", (req, res) => res.json({ ok: true }));
 app.use("/api/auth", authRoutes);
 app.use("/api/bookings", bookingRoutes);
+app.use("/api", quizRoutes);
+app.use("/api/staff/applicants", applicantRoutes);
+app.use("/api/staff/cleaners", cleanerRoutes);
+app.use("/api/reviews", reviewRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);

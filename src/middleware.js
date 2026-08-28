@@ -1,4 +1,6 @@
 const jwt = require("jsonwebtoken");
+const prisma = require("./prisma");
+const asyncHandler = require("./asyncHandler");
 
 function requireAuth(req, res, next) {
   const token = req.cookies.token;
@@ -20,4 +22,15 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { requireAuth, requireRole };
+// Re-checks the DB so a just-terminated cleaner's still-valid JWT cookie
+// can't keep them logged in for up to 30 days after being fired.
+const requireActiveStaff = asyncHandler(async (req, res, next) => {
+  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  if (!user || user.employmentStatus === "TERMINATED") {
+    return res.status(403).json({ error: "Account no longer active" });
+  }
+  req.user = user;
+  next();
+});
+
+module.exports = { requireAuth, requireRole, requireActiveStaff };

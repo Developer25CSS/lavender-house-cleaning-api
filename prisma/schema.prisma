@@ -16,12 +16,33 @@ model User {
   role         Role      @default(CUSTOMER)
   createdAt    DateTime  @default(now())
   bookings     Booking[]
+
+  // Cleaner-specific fields — only meaningful when role is STAFF (or ADMIN, unused there)
+  payTrack         PayTrack?
+  employmentStatus EmploymentStatus? @default(ACTIVE)
+
+  bookingsAsCleaner  Booking[]        @relation("AssignedCleaner")
+  bookingsPreferred  Booking[]        @relation("PreferredCleaner")
+  reviewsReceived    Review[]
+  disciplineReceived DisciplineNote[] @relation("DisciplineSubject")
+  disciplineIssued   DisciplineNote[] @relation("DisciplineIssuer")
 }
 
 enum Role {
   CUSTOMER
   STAFF
   ADMIN
+}
+
+enum PayTrack {
+  OWN_SUPPLIES
+  COMPANY_SUPPLIES
+}
+
+enum EmploymentStatus {
+  ACTIVE
+  WARNED
+  TERMINATED
 }
 
 model Booking {
@@ -39,6 +60,12 @@ model Booking {
   totalPrice Int?
   status     Status   @default(PENDING)
   createdAt  DateTime @default(now())
+
+  assignedCleanerId  String?
+  assignedCleaner    User?    @relation("AssignedCleaner", fields: [assignedCleanerId], references: [id])
+  preferredCleanerId String?
+  preferredCleaner   User?    @relation("PreferredCleaner", fields: [preferredCleanerId], references: [id])
+  review             Review?
 }
 
 enum Status {
@@ -46,4 +73,58 @@ enum Status {
   CONFIRMED
   COMPLETED
   CANCELLED
+}
+
+model Applicant {
+  id         String          @id @default(cuid())
+  name       String
+  email      String          @unique
+  phone      String
+  payTrack   PayTrack
+  answers    Int[]
+  quizScore  Int
+  quizPassed Boolean
+  status     ApplicantStatus @default(PENDING)
+  createdAt  DateTime        @default(now())
+}
+
+enum ApplicantStatus {
+  PENDING
+  HIRED
+  REJECTED
+}
+
+model QuizQuestion {
+  id           String       @id @default(cuid())
+  text         String
+  choices      String[]
+  correctIndex Int
+  category     QuizCategory
+  order        Int
+}
+
+enum QuizCategory {
+  GENERAL
+  SCENARIO
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  bookingId String   @unique
+  booking   Booking  @relation(fields: [bookingId], references: [id])
+  cleanerId String
+  cleaner   User     @relation(fields: [cleanerId], references: [id])
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+}
+
+model DisciplineNote {
+  id         String   @id @default(cuid())
+  cleanerId  String
+  cleaner    User     @relation("DisciplineSubject", fields: [cleanerId], references: [id])
+  issuedById String
+  issuedBy   User     @relation("DisciplineIssuer", fields: [issuedById], references: [id])
+  note       String
+  createdAt  DateTime @default(now())
 }
