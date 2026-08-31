@@ -9,4 +9,4 @@ database_name = "lavender-house-cleaning-db"
 database_id = "5abe58c4-881b-428a-9fdf-ef6766aa0e8d"
 
 [vars]
-CORS_ORIGIN = "https://lavenderhousecleaning.company,https://lavender-house-cleaning.pages.dev"
+CORS_ORIGIN = "https://www.lavenderhousecleaning.company,https://lavenderhousecleaning.company,https://lavender-house-cleaning.pages.dev"
